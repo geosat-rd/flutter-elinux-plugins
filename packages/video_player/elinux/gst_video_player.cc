@@ -326,8 +326,8 @@ bool GstVideoPlayer::CreatePipeline()
     g_object_set(G_OBJECT(gst_.queue),
 		 "max-size-buffers", 1, // Limit to 1 buffers to keep latency low
 		 "max-size-bytes", 0,   // No byte limit
-		 "max-size-time", 0,    // No time limit
-		 //"max-size-time", GST_MSECOND * 20,    // Limit handle queue for 20ms
+		 //"max-size-time", 0,    // No time limit
+		 "max-size-time", GST_MSECOND * 5,    // Limit handle queue for 20ms
 		 "leaky", 2,            // Leak downstream (drop old frames) if full
 		 NULL);
 
