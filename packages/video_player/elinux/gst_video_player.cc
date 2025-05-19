@@ -552,7 +552,7 @@ void GstVideoPlayer::GetVideoSize(int32_t &width, int32_t &height)
     }
 
     auto *caps = gst_pad_get_current_caps(sink_pad);
-    if (!caps)
+    if (!caps || gst_caps_get_size(caps) == 0)
     {
 	std::cerr << "Failed to get caps" << std::endl;
 	gst_object_unref(sink_pad);
@@ -609,14 +609,16 @@ void GstVideoPlayer::HandoffHandler(GstElement *fakesink, GstBuffer *buf, GstPad
     auto *self = reinterpret_cast<GstVideoPlayer *>(user_data);
 
     auto *caps = gst_pad_get_current_caps(new_pad);
-    if (!caps)
+    if (!caps || gst_caps_get_size(caps) == 0)
     {
+	std::cerr << "[Handoff] Failed to get valid caps" << std::endl;
 	return;
     }
 
     auto *structure = gst_caps_get_structure(caps, 0);
     if (!structure)
     {
+	std::cerr << "[Handoff] Caps has no structure" << std::endl;
 	gst_caps_unref(caps);
 	return;
     }
