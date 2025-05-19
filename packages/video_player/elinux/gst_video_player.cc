@@ -49,57 +49,40 @@ GstVideoPlayer::~GstVideoPlayer()
 // static
 void GstVideoPlayer::GstLibraryLoad()
 {
-    std::cerr << "test GstLibraryLoad" << std::endl;
     gst_init(NULL, NULL);
 }
 
 // static
 void GstVideoPlayer::GstLibraryUnload()
 {
-    std::cerr << "test GstLibraryUnload" << std::endl;
     gst_deinit();
 }
 
 bool GstVideoPlayer::Init()
 {
-    std::cerr << "[Alyson] version 2025-01-21_004" << std::endl;
-    std::cerr << "[Alyson] Init" << std::endl;
     if (!gst_.pipeline)
     {
-	std::cerr << "[Alyson] Failed to create a pipeline" << std::endl;
 	return false;
     }
-
-    std::cerr << "test Init 2" << std::endl;
 
     // Prerolls before getting information from the pipeline.
     if (!Preroll())
     {
-	std::cerr << "[Alyson] Failed to preroll" << std::endl;
 	DestroyPipeline();
 	return false;
     }
 
-    std::cerr << "test Init 3" << std::endl;
-
     // Sets internal video size and buffier.
     GetVideoSize(width_, height_);
-    std::cerr << "[Alyson] Pixel buffer size: width = " << width_
-	      << ", height = " << height_ << std::endl;
     pixels_.reset(new uint32_t[width_ * height_]);
 
-    std::cerr << "test Init 4" << std::endl;
-
     stream_handler_->OnNotifyInitialized();
-
-    std::cerr << "test Init 5" << std::endl;
 
     return true;
 }
 
 bool GstVideoPlayer::Play()
 {
-    std::cerr << "[Alyson] Play" << std::endl;
     if (gst_element_set_state(gst_.pipeline, GST_STATE_PLAYING) ==
 	GST_STATE_CHANGE_FAILURE)
     {
@@ -110,13 +93,11 @@ bool GstVideoPlayer::Play()
     std::cerr << "GstVideoPlayer::Play" << std::endl;
     stream_handler_->OnNotifyPlaying(true);
 
-    std::cerr << "test Play 2" << std::endl;
     return true;
 }
 
 bool GstVideoPlayer::Pause()
 {
-    std::cerr << "[Alyson] Pause" << std::endl;
     if (gst_element_set_state(gst_.pipeline, GST_STATE_PAUSED) ==
 	GST_STATE_CHANGE_FAILURE)
     {
@@ -124,17 +105,12 @@ bool GstVideoPlayer::Pause()
 	return false;
     }
 
-    std::cerr << "test Pause 2" << std::endl;
-
     stream_handler_->OnNotifyPlaying(false);
-
-    std::cerr << "test Pause 3" << std::endl;
     return true;
 }
 
 bool GstVideoPlayer::Stop()
 {
-    std::cerr << "[Alyson] Stop" << std::endl;
     if (gst_element_set_state(gst_.pipeline, GST_STATE_READY) ==
 	GST_STATE_CHANGE_FAILURE)
     {
@@ -142,11 +118,7 @@ bool GstVideoPlayer::Stop()
 	return false;
     }
 
-    std::cerr << "test Stop 2" << std::endl;
-
     stream_handler_->OnNotifyPlaying(false);
-
-    std::cerr << "test Stop 3" << std::endl;
     return true;
 }
 
@@ -228,7 +200,6 @@ int64_t GstVideoPlayer::GetDuration()
 
 int64_t GstVideoPlayer::GetCurrentPosition()
 {
-    std::cerr << "test GetCurrentPosition" << std::endl;
     gint64 position = 0;
 
     // Sometimes we get an error when playing streaming videos.
@@ -238,8 +209,6 @@ int64_t GstVideoPlayer::GetCurrentPosition()
 	return -1;
     }
 
-    std::cerr << "test GetCurrentPosition 2" << std::endl;
-
     // TODO: We need to handle this code in the proper plase.
     // The VideoPlayer plugin doesn't have a main loop, so EOS message
     // received from GStreamer cannot be processed directly in a callback
@@ -247,32 +216,20 @@ int64_t GstVideoPlayer::GetCurrentPosition()
     // needs to be thrown in the main thread.
     {
 	std::unique_lock<std::mutex> lock(mutex_event_completed_);
-	std::cerr << "test GetCurrentPosition 3" << std::endl;
 	if (is_completed_)
 	{
 	    is_completed_ = false;
-
-	    std::cerr << "test GetCurrentPosition 4" << std::endl;
 	    lock.unlock();
-
-	    std::cerr << "test GetCurrentPosition 5" << std::endl;
-
 	    if (auto_repeat_)
 	    {
-		std::cerr << "test GetCurrentPosition 6" << std::endl;
 		SetSeek(0);
-		std::cerr << "test GetCurrentPosition 7" << std::endl;
 	    }
 	    else
 	    {
-		std::cerr << "test GetCurrentPosition 8" << std::endl;
 		stream_handler_->OnNotifyCompleted();
-		std::cerr << "test GetCurrentPosition 9" << std::endl;
 	    }
 	}
     }
-
-    std::cerr << "test GetCurrentPosition 10" << std::endl;
 
     return position / GST_MSECOND;
 }
@@ -323,19 +280,14 @@ void GstVideoPlayer::UnrefEGLImage()
 
 const uint8_t *GstVideoPlayer::GetFrameBuffer()
 {
-    std::cerr << "[Alyson][GetFrameBuffer] start  " << std::endl;
     std::shared_lock<std::shared_mutex> lock(mutex_buffer_);
     if (!gst_.buffer)
     {
-	std::cerr << "[Alyson][GetFrameBuffer] gst_.buffer is nullptr" << std::endl;
 	return nullptr;
     }
 
     const uint32_t pixel_bytes = width_ * height_ * 4;
   //  const uint32_t pixel_bytes = width_ * height_ * 1.5; => for NV12/I412
-
-    std::cerr << "[Alyson][GetFrameBuffer] width: " << width_ << ", height: " << height_ << std::endl;
-    std::cerr << "[Alyson][GetFrameBuffer] pixel_bytes: " << pixel_bytes << std::endl;
 
     gst_buffer_extract(gst_.buffer, 0, pixels_.get(), pixel_bytes);
 
@@ -347,13 +299,11 @@ const uint8_t *GstVideoPlayer::GetFrameBuffer()
 // fakesink"
 bool GstVideoPlayer::CreatePipeline()
 {
-    std::cerr << "[Alyson] Creating GStreamer pipeline" << std::endl;
 
     // [1/10] Create the pipeline
     gst_.pipeline = gst_pipeline_new("pipeline");
     if (!gst_.pipeline)
     {
-	std::cerr << "[Alyson] Failed to create pipeline" << std::endl;
 	return false;
     }
 
@@ -361,7 +311,7 @@ bool GstVideoPlayer::CreatePipeline()
     gst_.source = gst_element_factory_make("rtspsrc", "source");
     gst_.depay = gst_element_factory_make("rtph264depay", "depay");
     gst_.parse = gst_element_factory_make("h264parse", "parse");
-    gst_.decoder = gst_element_factory_make("qtic2vdec", "decoder");
+    gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
     gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
     gst_.video_sink = gst_element_factory_make("fakesink", "videosink"); // Fake sink to handle video frames
 
@@ -369,15 +319,13 @@ bool GstVideoPlayer::CreatePipeline()
     if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder ||
 	!gst_.video_convert || !gst_.video_sink)
     {
-	std::cerr << "[Alyson] Failed to create one or more GStreamer elements" << std::endl;
 	return false;
     }
 
     // [4/10] Set properties for RTSP source
     g_object_set(G_OBJECT(gst_.source),
 		 "location", uri_.c_str(),   // RTSP stream URI
-	//         "latency", 10,              // Buffer latency in ms
-		  "latency", 200,              // Buffer latency in ms
+		 "latency", 0,              // Buffer latency in ms
 		 "buffer-mode", 0,           // Enable low latency mode
 		 "do-retransmission", FALSE, // Disable packet retransmission
 		 "protocols", 0x00000004,    // Use TCP for transport
@@ -399,7 +347,6 @@ bool GstVideoPlayer::CreatePipeline()
     // [7/10] Link static elements
     if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, NULL))
     {
-	std::cerr << "[Alyson] Failed to link static elements" << std::endl;
 	return false;
     }
 
@@ -409,7 +356,6 @@ bool GstVideoPlayer::CreatePipeline()
   //  auto *caps = gst_caps_from_string("video/x-raw,format=I412"); -> Failed to link
     if (!gst_element_link_filtered(gst_.video_convert, gst_.video_sink, caps))
     {
-	std::cerr << "[Alyson] Failed to link videoconvert to fakesink with RGBA caps" << std::endl;
 	gst_caps_unref(caps);
 	return false;
     }
@@ -425,12 +371,9 @@ bool GstVideoPlayer::CreatePipeline()
     gst_.bus = gst_pipeline_get_bus(GST_PIPELINE(gst_.pipeline));
     if (!gst_.bus)
     {
-	std::cerr << "[Alyson] Failed to get pipeline bus" << std::endl;
 	return false;
     }
     gst_bus_set_sync_handler(gst_.bus, HandleGstMessage, this, NULL);
-
-    std::cerr << "[Alyson] Pipeline created successfully" << std::endl;
 
     return true;
 }
@@ -439,14 +382,12 @@ bool GstVideoPlayer::Preroll()
 {
     if (!gst_.pipeline)
     {
-	std::cerr << "[Alyson] Preroll failed: Pipeline is nullptr" << std::endl;
 	return false;
     }
 
     auto result = gst_element_set_state(gst_.pipeline, GST_STATE_PAUSED);
     if (result == GST_STATE_CHANGE_FAILURE)
     {
-	std::cerr << "[Alyson] Preroll failed: Unable to set pipeline to PAUSED state" << std::endl;
 	return false;
     }
 
@@ -456,17 +397,8 @@ bool GstVideoPlayer::Preroll()
 	result = gst_element_get_state(gst_.pipeline, &state, &pending, GST_CLOCK_TIME_NONE);
 	if (result == GST_STATE_CHANGE_FAILURE)
 	{
-	    std::cerr << "[Alyson] Preroll failed: Unable to get pipeline state after async transition" << std::endl;
 	    return false;
 	}
-
-	std::cerr << "[Alyson] Preroll succeeded: Pipeline state is now "
-		  << gst_element_state_get_name(state)
-		  << ", pending state: " << gst_element_state_get_name(pending) << std::endl;
-    }
-    else
-    {
-	std::cerr << "[Alyson] Preroll succeeded: Pipeline is already in PAUSED state" << std::endl;
     }
 
     return true;
@@ -474,27 +406,17 @@ bool GstVideoPlayer::Preroll()
 
 void GstVideoPlayer::DestroyPipeline()
 {
-    std::cerr << "[Alyson] DestroyPipeline: Starting pipeline destruction" << std::endl;
 
     // Disable the "handoff" signal to prevent further callbacks
     if (gst_.video_sink)
     {
 	g_object_set(G_OBJECT(gst_.video_sink), "signal-handoffs", FALSE, NULL);
-	std::cerr << "[Alyson] Disabled handoff signal on video sink" << std::endl;
     }
 
     // Set the pipeline state to NULL to release all resources
     if (gst_.pipeline)
     {
-	GstStateChangeReturn ret = gst_element_set_state(gst_.pipeline, GST_STATE_NULL);
-	if (ret == GST_STATE_CHANGE_FAILURE)
-	{
-	    std::cerr << "[Alyson] Failed to set pipeline to NULL state" << std::endl;
-	}
-	else
-	{
-	    std::cerr << "[Alyson] Pipeline set to NULL state successfully" << std::endl;
-	}
+	gst_element_set_state(gst_.pipeline, GST_STATE_NULL);
     }
 
     // Unreference the buffer if it exists
@@ -502,7 +424,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_buffer_unref(gst_.buffer);
 	gst_.buffer = nullptr;
-	std::cerr << "[Alyson] Released buffer reference" << std::endl;
     }
 
     // Unreference and clear the bus
@@ -510,7 +431,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.bus);
 	gst_.bus = nullptr;
-	std::cerr << "[Alyson] Released bus reference" << std::endl;
     }
 
     // Unreference and clear the pipeline
@@ -518,7 +438,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.pipeline);
 	gst_.pipeline = nullptr;
-	std::cerr << "[Alyson] Released pipeline reference" << std::endl;
     }
 
     // Unreference and clear the output
@@ -526,7 +445,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.output);
 	gst_.output = nullptr;
-	std::cerr << "[Alyson] Released output reference" << std::endl;
     }
 
     // Unreference and clear the video sink
@@ -534,7 +452,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.video_sink);
 	gst_.video_sink = nullptr;
-	std::cerr << "[Alyson] Released video sink reference" << std::endl;
     }
 
     // Unreference and clear the video convert
@@ -542,7 +459,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.video_convert);
 	gst_.video_convert = nullptr;
-	std::cerr << "[Alyson] Released video convert reference" << std::endl;
     }
 
     // Unreference and clear the decoder
@@ -550,7 +466,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.decoder);
 	gst_.decoder = nullptr;
-	std::cerr << "[Alyson] Released decoder reference" << std::endl;
     }
 
     // Unreference and clear the parse
@@ -558,7 +473,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.parse);
 	gst_.parse = nullptr;
-	std::cerr << "[Alyson] Released parse reference" << std::endl;
     }
 
     // Unreference and clear the depay
@@ -566,7 +480,6 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.depay);
 	gst_.depay = nullptr;
-	std::cerr << "[Alyson] Released depay reference" << std::endl;
     }
 
     // Unreference and clear the source
@@ -574,10 +487,8 @@ void GstVideoPlayer::DestroyPipeline()
     {
 	gst_object_unref(gst_.source);
 	gst_.source = nullptr;
-	std::cerr << "[Alyson] Released source reference" << std::endl;
     }
 
-    std::cerr << "[Alyson] DestroyPipeline: Cleanup complete" << std::endl;
 }
 
 std::string GstVideoPlayer::ParseUri(const std::string &uri)
@@ -604,12 +515,8 @@ void GstVideoPlayer::GetVideoSize(int32_t &width, int32_t &height)
 
     if (width <= 0 || height <= 0 || width > MAX_WIDTH || height > MAX_HEIGHT)
     {
-	std::cerr << "[Alyson] Invalid pixel buffer size, width = " << width
-		  << ", height = " << height << std::endl;
 	width = 0;
 	height = 0;
-	std::cerr << "[Alyson] Resetting the size to zero width = " << width
-		  << ", height = " << height << std::endl;
 	return;
     }
 
@@ -681,21 +588,18 @@ void GstVideoPlayer::onPadAdded(GstElement *src, GstPad *new_pad, GstElement *de
 // static
 void GstVideoPlayer::HandoffHandler(GstElement *fakesink, GstBuffer *buf, GstPad *new_pad, gpointer user_data)
 {
-    std::cerr << "[Alyson] HandoffHandler: Received a buffer" << std::endl;
 
     auto *self = reinterpret_cast<GstVideoPlayer *>(user_data);
 
     auto *caps = gst_pad_get_current_caps(new_pad);
     if (!caps)
     {
-	std::cerr << "[Alyson] HandoffHandler: Failed to get caps from pad" << std::endl;
 	return;
     }
 
     auto *structure = gst_caps_get_structure(caps, 0);
     if (!structure)
     {
-	std::cerr << "[Alyson] HandoffHandler: Failed to get structure from caps" << std::endl;
 	gst_caps_unref(caps);
 	return;
     }
@@ -704,7 +608,6 @@ void GstVideoPlayer::HandoffHandler(GstElement *fakesink, GstBuffer *buf, GstPad
     if (!gst_structure_get_int(structure, "width", &width) ||
 	!gst_structure_get_int(structure, "height", &height))
     {
-	std::cerr << "[Alyson] HandoffHandler: Failed to get video dimensions" << std::endl;
 	gst_caps_unref(caps);
 	return;
     }
@@ -717,13 +620,9 @@ void GstVideoPlayer::HandoffHandler(GstElement *fakesink, GstBuffer *buf, GstPad
 	try
 	{
 	    self->pixels_.reset(new uint32_t[width * height]);
-	    std::cerr << "[Alyson] HandoffHandler: Pixel buffer resized to "
-		      << width << "x" << height << std::endl;
 	}
 	catch (const std::bad_alloc &e)
 	{
-	    std::cerr << "[Alyson] HandoffHandler: Memory allocation failed: "
-		      << e.what() << std::endl;
 	    return;
 	}
     }
@@ -739,7 +638,6 @@ void GstVideoPlayer::HandoffHandler(GstElement *fakesink, GstBuffer *buf, GstPad
 
     self->stream_handler_->OnNotifyFrameDecoded();
 
-    std::cerr << "[Alyson] HandoffHandler: Frame processed and updated" << std::endl;
 }
 
 // static
