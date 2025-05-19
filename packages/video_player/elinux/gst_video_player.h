@@ -61,6 +61,7 @@ class GstVideoPlayer {
     GstElement* depay;   // rtph264depay
     GstElement* parse;   // h264parse
     GstElement* decoder; // qtic2vdec
+    GstElement* queue;
   };
 
   static void onPadAdded(GstElement* src, GstPad* new_pad, GstElement* depay);
