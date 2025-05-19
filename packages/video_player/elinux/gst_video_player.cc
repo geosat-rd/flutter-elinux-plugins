@@ -314,6 +314,7 @@ bool GstVideoPlayer::CreatePipeline()
     gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
     gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
     gst_.video_sink = gst_element_factory_make("fakesink", "videosink"); // Fake sink to handle video frames
+    gst_.queue = gst_element_factory_make("queue", "queue");
 
     // [3/10] Check if elements are created successfully
     if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder ||
@@ -322,10 +323,26 @@ bool GstVideoPlayer::CreatePipeline()
 	return false;
     }
 
+    g_object_set(G_OBJECT(gst_.queue),
+		 "max-size-buffers", 1, // Limit to 1 buffers to keep latency low
+		 "max-size-bytes", 0,   // No byte limit
+		 "max-size-time", 0,    // No time limit
+		 //"max-size-time", GST_MSECOND * 20,    // Limit handle queue for 20ms
+		 "leaky", 2,            // Leak downstream (drop old frames) if full
+		 NULL);
+
+    /*
+     * For leaky:
+     * Value                Behavior
+     *  0 (No Leak)         Blocks upstream until space is free
+     *  1 (Upstream Leak)   Drops new incoming buffers
+     *  2 (Downstream Leak) Drops old buffers in the queue
+     */
+
     // [4/10] Set properties for RTSP source
     g_object_set(G_OBJECT(gst_.source),
 		 "location", uri_.c_str(),   // RTSP stream URI
-		 "latency", 0,              // Buffer latency in ms
+		 "latency", 0,               // Buffer latency in ms
 		 "buffer-mode", 0,           // Enable low latency mode
 		 "do-retransmission", FALSE, // Disable packet retransmission
 		 "protocols", 0x00000004,    // Use TCP for transport
@@ -342,10 +359,10 @@ bool GstVideoPlayer::CreatePipeline()
     // [6/10] Add all elements to the pipeline
     gst_bin_add_many(GST_BIN(gst_.pipeline),
 		     gst_.source, gst_.depay, gst_.parse, gst_.decoder,
-		     gst_.video_convert, gst_.video_sink, NULL);
+		     gst_.video_convert, gst_.queue, gst_.video_sink, NULL);
 
     // [7/10] Link static elements
-    if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, NULL))
+    if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, gst_.queue, NULL))
     {
 	return false;
     }
@@ -354,7 +371,7 @@ bool GstVideoPlayer::CreatePipeline()
     auto *caps = gst_caps_from_string("video/x-raw,format=RGBA");
   //  auto *caps = gst_caps_from_string("video/x-raw,format=NV12"); -> X
   //  auto *caps = gst_caps_from_string("video/x-raw,format=I412"); -> Failed to link
-    if (!gst_element_link_filtered(gst_.video_convert, gst_.video_sink, caps))
+    if (!gst_element_link_filtered(gst_.queue, gst_.video_sink, caps))
     {
 	gst_caps_unref(caps);
 	return false;
