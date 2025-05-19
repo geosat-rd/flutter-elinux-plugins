@@ -1,6 +1,7 @@
 // Copyright 2021 Sony Group Corporation. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+//Alyson 2025-01-20-004
 
 #ifndef PACKAGES_VIDEO_PLAYER_VIDEO_PLAYER_ELINUX_GST_VIDEO_PLAYER_H_
 #define PACKAGES_VIDEO_PLAYER_VIDEO_PLAYER_ELINUX_GST_VIDEO_PLAYER_H_
@@ -56,8 +57,14 @@ class GstVideoPlayer {
     GstElement* output;
     GstBus* bus;
     GstBuffer* buffer;
+    GstElement* source;  // rtspsrc
+    GstElement* depay;   // rtph264depay
+    GstElement* parse;   // h264parse
+    GstElement* decoder; // qtic2vdec
   };
 
+  static void onPadAdded(GstElement* src, GstPad* new_pad, GstElement* depay);
+  static void PrintCaps(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
   static void HandoffHandler(GstElement* fakesink, GstBuffer* buf,
                              GstPad* new_pad, gpointer user_data);
   static GstBusSyncReply HandleGstMessage(GstBus* bus, GstMessage* message,
