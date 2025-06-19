@@ -277,12 +277,17 @@ const uint8_t* GstVideoPlayer::GetFrameBuffer() {
 }
 
 bool GstVideoPlayer::CreatePipeline() {
+  std::cerr << "[DEBUG] uri_ = " << uri_ << std::endl;
+  
   bool is_rtsp = (uri_.find("rtsp://") == 0);
+  std::cerr << "[DEBUG] is_rtsp = " << std::boolalpha << is_rtsp 
+            << " (find result: " << uri_.find("rtsp://") << ")" << std::endl;
+  
   if (is_rtsp) {
-  // RTSP 低延遲管道
+    std::cerr << "[DEBUG] Creating low-latency RTSP pipeline..." << std::endl;
     return CreateLowLatencyRTSPPipeline();
   } else {
-  // 檔案播放管道（自動選擇解碼器）
+    std::cerr << "[DEBUG] Creating auto-decode file pipeline..." << std::endl;
     return CreateAutoDecodeFilePipeline();
   }
 }
@@ -446,8 +451,15 @@ bool GstVideoPlayer::CreateAutoDecodeFilePipeline() {
 }
 
 bool GstVideoPlayer::Preroll() {
-  if (!gst_.playbin) {
-    return false;
+  bool is_rtsp = (uri_.find("rtsp://") == 0);
+  if (is_rtsp) {
+    if (!gst_.pipeline) {
+      return false;
+    }
+  } else {
+    if (!gst_.playbin) {
+      return false;
+    }
   }
 
   auto result = gst_element_set_state(gst_.pipeline, GST_STATE_PAUSED);
@@ -493,50 +505,38 @@ void GstVideoPlayer::DestroyPipeline() {
   }
 
   if (gst_.playbin) {
-    gst_object_unref(gst_.playbin);
     gst_.playbin = nullptr;
   }
 
   if (gst_.output) {
-    gst_object_unref(gst_.output);
     gst_.output = nullptr;
   }
 
   if (gst_.video_sink) {
-    gst_object_unref(gst_.video_sink);
     gst_.video_sink = nullptr;
   }
 
   if (gst_.video_convert) {
-    gst_object_unref(gst_.video_convert);
     gst_.video_convert = nullptr;
   }
 
   // Unreference and clear the decoder
-  if (gst_.decoder)
-  {
-    gst_object_unref(gst_.decoder);
+  if (gst_.decoder) {
     gst_.decoder = nullptr;
   }
 
   // Unreference and clear the parse
-  if (gst_.parse)
-  {
-    gst_object_unref(gst_.parse);
+  if (gst_.parse) {
     gst_.parse = nullptr;
   }
 
   // Unreference and clear the depay
-  if (gst_.depay)
-  {
-    gst_object_unref(gst_.depay);
+  if (gst_.depay) {
     gst_.depay = nullptr;
   }
 
   // Unreference and clear the source
-  if (gst_.source)
-  {
-    gst_object_unref(gst_.source);
+  if (gst_.source) {
     gst_.source = nullptr;
   }
 }
@@ -560,10 +560,12 @@ std::string GstVideoPlayer::ParseUri(const std::string& uri) {
 void GstVideoPlayer::GetVideoSize(int32_t& width, int32_t& height) {
   bool is_rtsp = (uri_.find("rtsp://") == 0);
   if (is_rtsp) {
+    std::cerr
+        << "rtsp width" << width << ", height " << height << std::endl;
     if (width <= 0 || height <= 0 || width > MAX_WIDTH || height > MAX_HEIGHT) {
-	  width = 0;
-	  height = 0;
-	  return;
+      width = 0;
+      height = 0;
+      return;
     }
   }
   
@@ -641,8 +643,7 @@ void GstVideoPlayer::HandoffHandler(GstElement* fakesink, GstBuffer* buf,
     return;
   }
 
-  int width;
-  int height;
+  int width = 0, height = 0;
   if (!gst_structure_get_int(structure, "width", &width) || !gst_structure_get_int(structure, "height", &height)) {
     gst_caps_unref(caps);
     return;
