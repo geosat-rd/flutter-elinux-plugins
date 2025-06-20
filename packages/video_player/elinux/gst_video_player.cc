@@ -25,6 +25,7 @@ GstVideoPlayer::GstVideoPlayer(
     gst_.decoder = nullptr;
 
   uri_ = ParseUri(uri);
+  is_rtsp_ = (uri_.find("rtsp://") == 0);
   if (!CreatePipeline()) {
     std::cerr << "Failed to create a pipeline" << std::endl;
     DestroyPipeline();
@@ -103,8 +104,7 @@ bool GstVideoPlayer::Stop() {
 }
 
 bool GstVideoPlayer::SetVolume(double volume) {
-  bool is_rtsp = (uri_.find("rtsp://") == 0);
-  if (is_rtsp) {
+  if (is_rtsp_) {
     if (!gst_.pipeline) {
       return false;
     }
@@ -120,8 +120,7 @@ bool GstVideoPlayer::SetVolume(double volume) {
 }
 
 bool GstVideoPlayer::SetPlaybackRate(double rate) {
-  bool is_rtsp = (uri_.find("rtsp://") == 0);
-  if (is_rtsp) {
+  if (is_rtsp_) {
     if (!gst_.pipeline) {
       return false;
     }
@@ -154,7 +153,7 @@ bool GstVideoPlayer::SetPlaybackRate(double rate) {
   playback_rate_ = rate;
   mute_ = (rate < 0.5 || rate > 2);
   
-  if (is_rtsp) {
+  if (is_rtsp_) {
     g_object_set(gst_.pipeline, "mute", mute_, NULL);
   } else {
     g_object_set(gst_.playbin, "mute", mute_, NULL);
@@ -278,12 +277,7 @@ const uint8_t* GstVideoPlayer::GetFrameBuffer() {
 
 bool GstVideoPlayer::CreatePipeline() {
   std::cerr << "[DEBUG] uri_ = " << uri_ << std::endl;
-  
-  bool is_rtsp = (uri_.find("rtsp://") == 0);
-  std::cerr << "[DEBUG] is_rtsp = " << std::boolalpha << is_rtsp 
-            << " (find result: " << uri_.find("rtsp://") << ")" << std::endl;
-  
-  if (is_rtsp) {
+  if (is_rtsp_) {
     std::cerr << "[DEBUG] Creating low-latency RTSP pipeline..." << std::endl;
     return CreateLowLatencyRTSPPipeline();
   } else {
@@ -303,7 +297,21 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
   gst_.source = gst_element_factory_make("rtspsrc", "source");
   gst_.depay = gst_element_factory_make("rtph264depay", "depay");
   gst_.parse = gst_element_factory_make("h264parse", "parse");
+  // 嘗試建立 qtivdec
+  // 自動根據環境選擇可用的解碼器，不會因為某台電腦沒有 qtivdec 就失敗
   gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
+  if (!gst_.decoder) {
+    std::cerr << "qtivdec not found, fallback to avdec_h264" << std::endl;
+    gst_.decoder = gst_element_factory_make("avdec_h264", "decoder");
+    if (!gst_.decoder) {
+      std::cerr << "avdec_h264 not found, fallback to openh264dec" << std::endl;
+      gst_.decoder = gst_element_factory_make("openh264dec", "decoder");
+      if (!gst_.decoder) {
+        std::cerr << "No suitable decoder found!" << std::endl;
+        return false;
+      }
+    }
+  }
   gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
   gst_.video_sink = gst_element_factory_make("fakesink", "videosink"); // Fake sink to handle video frames
   gst_.queue = gst_element_factory_make("queue", "queue");
@@ -451,8 +459,7 @@ bool GstVideoPlayer::CreateAutoDecodeFilePipeline() {
 }
 
 bool GstVideoPlayer::Preroll() {
-  bool is_rtsp = (uri_.find("rtsp://") == 0);
-  if (is_rtsp) {
+  if (is_rtsp_) {
     if (!gst_.pipeline) {
       return false;
     }
@@ -558,8 +565,7 @@ std::string GstVideoPlayer::ParseUri(const std::string& uri) {
 }
 
 void GstVideoPlayer::GetVideoSize(int32_t& width, int32_t& height) {
-  bool is_rtsp = (uri_.find("rtsp://") == 0);
-  if (is_rtsp) {
+  if (is_rtsp_) {
     std::cerr
         << "rtsp width" << width << ", height " << height << std::endl;
     if (width <= 0 || height <= 0 || width > MAX_WIDTH || height > MAX_HEIGHT) {
