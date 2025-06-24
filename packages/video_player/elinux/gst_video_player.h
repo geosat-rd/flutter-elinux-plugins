@@ -65,13 +65,14 @@ class GstVideoPlayer {
   };
 
   static void onPadAdded(GstElement* src, GstPad* new_pad, GstElement* depay);
-  static void PrintCaps(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
   static void HandoffHandler(GstElement* fakesink, GstBuffer* buf,
                              GstPad* new_pad, gpointer user_data);
   static GstBusSyncReply HandleGstMessage(GstBus* bus, GstMessage* message,
                                           gpointer user_data);
   std::string ParseUri(const std::string& uri);
   bool CreatePipeline();
+  bool CreateLowLatencyRTSPPipeline();
+  bool CreateAutoDecodeFilePipeline();
   void DestroyPipeline();
   bool Preroll();
   void GetVideoSize(int32_t& width, int32_t& height);
@@ -89,6 +90,8 @@ class GstVideoPlayer {
   bool mute_ = false;
   bool auto_repeat_ = false;
   bool is_completed_ = false;
+  bool is_playing_ = false;
+  bool is_rtsp_ = false;
   std::mutex mutex_event_completed_;
   std::shared_mutex mutex_buffer_;
   std::unique_ptr<VideoPlayerStreamHandler> stream_handler_;
