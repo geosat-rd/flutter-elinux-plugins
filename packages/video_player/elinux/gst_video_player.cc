@@ -279,11 +279,108 @@ bool GstVideoPlayer::CreatePipeline() {
   std::cerr << "[DEBUG] uri_ = " << uri_ << std::endl;
   if (is_rtsp_) {
     std::cerr << "[DEBUG] Creating low-latency RTSP pipeline..." << std::endl;
-    return CreateLowLatencyRTSPPipeline();
+    return CreateLowLatencyPipeline();
   } else {
     std::cerr << "[DEBUG] Creating auto-decode file pipeline..." << std::endl;
     return CreateAutoDecodeFilePipeline();
   }
+}
+
+bool GstVideoPlayer::CreateLowLatencyPipeline() {
+  if (CreateLowLatencyUDPPipeline()) {
+    std::cout << "✅ 使用 udpsrc 成功" << std::endl;
+    return true;
+  } else {
+    std::cout << "⚠️ 使用 udpsrc 失敗，改用 rtspsrc" << std::endl;
+    return CreateLowLatencyRTSPPipeline();
+  }
+}
+
+bool GstVideoPlayer::CreateLowLatencyUDPPipeline() {
+  gst_.pipeline = gst_pipeline_new("udp_pipeline");
+  if (!gst_.pipeline) return false;
+
+  gst_.source = gst_element_factory_make("udpsrc", "source");
+  gst_.depay = gst_element_factory_make("rtph264depay", "depay");
+  gst_.parse = gst_element_factory_make("h264parse", "parse");
+  gst_.decoder = gst_element_factory_make("v412h264dec", "decoder");
+  if (!gst_.decoder) {
+    gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
+    if (!gst_.decoder)
+      gst_.decoder = gst_element_factory_make("avdec_h264", "decoder");
+    if (!gst_.decoder)
+      gst_.decoder = gst_element_factory_make("openh264dec", "decoder");
+    if (!gst_.decoder) {
+      std::cerr << "No decoder found for UDP mode" << std::endl;
+      return false;
+    }
+  }
+
+  gst_.video_sink = gst_element_factory_make("fakesink", "sink");
+  gst_.queue = gst_element_factory_make("queue", "queue");
+
+  if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder || !gst_.queue || !gst_.video_sink)
+    return false;
+
+  g_object_set(G_OBJECT(gst_.source),
+               "port", 5000,
+               "caps", gst_caps_from_string("application/x-rtp, media=video, encoding-name=H264, payload=96"),
+               NULL);
+
+  g_object_set(G_OBJECT(gst_.queue),
+               "max-size-buffers", 1,
+               "max-size-bytes", 0,
+               "max-size-time", GST_MSECOND * 1,
+               "leaky", 2,
+               NULL);
+
+  g_object_set(G_OBJECT(gst_.video_sink),
+               "sync", FALSE,
+               "async", FALSE,
+               "signal-handoffs", TRUE,
+               NULL);
+
+  gst_bin_add_many(GST_BIN(gst_.pipeline),
+                   gst_.source, gst_.depay, gst_.parse,
+                   gst_.decoder, gst_.queue, gst_.video_sink,
+                   NULL);
+
+  if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.queue, NULL))
+    return false;
+
+  GstCaps *caps = gst_caps_from_string("video/x-raw,format=RGBA");
+  if (!gst_element_link_filtered(gst_.queue, gst_.video_sink, caps)) {
+    std::cerr << "UDP: Direct RGBA link failed, fallback to videoconvert" << std::endl;
+    gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
+    gst_bin_add(GST_BIN(gst_.pipeline), gst_.video_convert);
+    gst_element_sync_state_with_parent(gst_.video_convert);
+
+    gst_element_unlink(gst_.decoder, gst_.queue);
+
+    if (!gst_element_link_many(gst_.decoder, gst_.video_convert, gst_.queue, NULL)) {
+      gst_caps_unref(caps);
+      return false;
+    }
+    if (!gst_element_link_filtered(gst_.queue, gst_.video_sink, caps)) {
+      gst_caps_unref(caps);
+      return false;
+    }
+  }
+  gst_caps_unref(caps);
+
+  g_signal_connect(gst_.video_sink, "handoff", G_CALLBACK(HandoffHandler), this);
+
+  gst_.bus = gst_pipeline_get_bus(GST_PIPELINE(gst_.pipeline));
+  if (!gst_.bus) return false;
+  gst_bus_set_sync_handler(gst_.bus, HandleGstMessage, this, NULL);
+
+  GstStateChangeReturn ret = gst_element_set_state(gst_.pipeline, GST_STATE_PLAYING);
+  if (ret == GST_STATE_CHANGE_FAILURE) {
+    std::cerr << "UDP pipeline failed to play" << std::endl;
+    return false;
+  }
+
+  return true;
 }
 
 bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
@@ -350,8 +447,10 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
   // [4/10] Set properties for RTSP source
   g_object_set(G_OBJECT(gst_.source),
 		 "location", uri_.c_str(),   // RTSP stream URI
-		 "latency", 0,               // Buffer latency in ms
-		 "buffer-mode", 0,           // Enable low latency mode
+		 //"latency", 0,             // Buffer latency in ms
+     "latency", 50,              // 減少到極小，但不是0
+		 //"buffer-mode", 0,         // Enable low latency mode
+     "buffer-mode", 4,           // 嘗試更 aggressive 的低延遲設計
      "ntp-sync", FALSE,          // 不與伺服器時間同步
 		 "do-retransmission", FALSE, // Disable packet retransmission
 		 "protocols", 0x00000004,    // Use TCP for transport

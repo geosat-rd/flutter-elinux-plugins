@@ -1,5 +1,5 @@
 ## 1.0.1
-* Reduce rtsp latency.
+* Reduce rtsp latency.playbin uri
 
 ## 1.0.0
 * Add `isPlaying` functionality with VideoPlayerController.
