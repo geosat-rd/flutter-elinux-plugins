@@ -298,26 +298,35 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
   gst_.depay = gst_element_factory_make("rtph264depay", "depay");
   gst_.parse = gst_element_factory_make("h264parse", "parse");
   // 嘗試建立 qtivdec
-  // 自動根據環境選擇可用的解碼器，不會因為某台電腦沒有 qtivdec 就失敗
-  gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
+  // 自動根據環境選擇可用的解碼器，不會因為某台電腦沒有qtivdec 就失敗
+  // qualcomm QCS6490 decoder > v412h264dec（Qualcomm 硬體加速優先）
+  // https://docs.qualcomm.com/bundle/publicresource/topics/80-70014-20Y/software.html#-gstreamer-
+  gst_.decoder = gst_element_factory_make("v412h264dec", "decoder");
   if (!gst_.decoder) {
-    std::cerr << "qtivdec not found, fallback to avdec_h264" << std::endl;
-    gst_.decoder = gst_element_factory_make("avdec_h264", "decoder");
+    std::cerr << "v412h264dec not found, fallback to qtivdec" << std::endl;
+    gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
     if (!gst_.decoder) {
-      std::cerr << "avdec_h264 not found, fallback to openh264dec" << std::endl;
-      gst_.decoder = gst_element_factory_make("openh264dec", "decoder");
+      std::cerr << "qtivdec not found, fallback to avdec_h264" << std::endl;
+      gst_.decoder = gst_element_factory_make("avdec_h264", "decoder");
       if (!gst_.decoder) {
-        std::cerr << "No suitable decoder found!" << std::endl;
-        return false;
+        std::cerr << "avdec_h264 not found, fallback to openh264dec" << std::endl;
+        gst_.decoder = gst_element_factory_make("openh264dec", "decoder");
+        if (!gst_.decoder) {
+          std::cerr << "No suitable decoder found!" << std::endl;
+          return false;
+        }
       }
     }
   }
-  gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
+  // gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
   gst_.video_sink = gst_element_factory_make("fakesink", "videosink"); // Fake sink to handle video frames
   gst_.queue = gst_element_factory_make("queue", "queue");
 
   // [3/10] Check if elements are created successfully
-  if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder || !gst_.video_convert || !gst_.video_sink) {
+  // if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder || !gst_.video_convert || !gst_.video_sink) {
+	//   return false;
+  // }
+  if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder || !gst_.video_sink) {
 	  return false;
   }
 
@@ -325,7 +334,8 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
 		 "max-size-buffers", 1, // Limit to 1 buffers to keep latency low
 		 "max-size-bytes", 0,   // No byte limit
 		 //"max-size-time", 0,    // No time limit
-		 "max-size-time", GST_MSECOND * 5,    // Limit handle queue for 20ms
+		 //"max-size-time", GST_MSECOND * 5,    // Limit handle queue for 20ms
+     "max-size-time", GST_MSECOND * 1,    // Limit handle queue 1ms
 		 "leaky", 2,            // Leak downstream (drop old frames) if full
 		 NULL);
 
@@ -342,6 +352,7 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
 		 "location", uri_.c_str(),   // RTSP stream URI
 		 "latency", 0,               // Buffer latency in ms
 		 "buffer-mode", 0,           // Enable low latency mode
+     "ntp-sync", FALSE,          // 不與伺服器時間同步
 		 "do-retransmission", FALSE, // Disable packet retransmission
 		 "protocols", 0x00000004,    // Use TCP for transport
 		 "drop-on-latency", TRUE,    // Drop frames if latency exceeds threshold
@@ -355,22 +366,51 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
 		 NULL);
 
   // [6/10] Add all elements to the pipeline
+  // gst_bin_add_many(GST_BIN(gst_.pipeline),
+	// 	     gst_.source, gst_.depay, gst_.parse, gst_.decoder,
+	// 	     gst_.video_convert, gst_.queue, gst_.video_sink, NULL);
   gst_bin_add_many(GST_BIN(gst_.pipeline),
 		     gst_.source, gst_.depay, gst_.parse, gst_.decoder,
-		     gst_.video_convert, gst_.queue, gst_.video_sink, NULL);
+		     gst_.queue, gst_.video_sink, NULL);
 
   // [7/10] Link static elements
-  if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, gst_.queue, NULL)) {
+  // if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, gst_.queue, NULL)) {
+	//   return false;
+  // }
+  if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.queue, NULL)) {
 	  return false;
   }
 
   // Link `videoconvert` to `fakesink` with a caps filter for RGBA format
   auto *caps = gst_caps_from_string("video/x-raw,format=RGBA");
+  //auto *caps = gst_caps_from_string("video/x-raw,format=(string){RGBA,NV12}"); //允許多種格式（例如支援 RGBA + NV12）
   // auto *caps = gst_caps_from_string("video/x-raw,format=NV12"); -> X
   // auto *caps = gst_caps_from_string("video/x-raw,format=I412"); -> Failed to link
   if (!gst_element_link_filtered(gst_.queue, gst_.video_sink, caps)) {
-    gst_caps_unref(caps);
-    return false;
+    // gst_caps_unref(caps);
+    // return false;
+    std::cerr << "Direct link with RGBA failed, fallback to add videoconvert\n";
+
+    // 建立 videoconvert 動態補上
+    gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
+    gst_bin_add(GST_BIN(gst_.pipeline), gst_.video_convert);
+    gst_element_sync_state_with_parent(gst_.video_convert);
+
+    // unlink old
+    gst_element_unlink(gst_.decoder, gst_.queue);
+
+    // relink
+    if (!gst_element_link_many(gst_.decoder, gst_.video_convert, gst_.queue, NULL)) {
+      std::cerr << "Failed to link with fallback videoconvert\n";
+      gst_caps_unref(caps);
+      return false;
+    }
+
+    if (!gst_element_link_filtered(gst_.queue, gst_.video_sink, caps)) {
+      std::cerr << "Even fallback failed\n";
+      gst_caps_unref(caps);
+      return false;
+    }
   }
   gst_caps_unref(caps);
 
