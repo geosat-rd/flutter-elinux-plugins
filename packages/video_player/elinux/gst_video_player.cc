@@ -199,7 +199,7 @@ int64_t GstVideoPlayer::GetCurrentPosition() {
 
   // Sometimes we get an error when playing streaming videos.
   if (!gst_element_query_position(gst_.pipeline, GST_FORMAT_TIME, &position)) {
-    std::cerr << "Failed to get current position" << std::endl;
+    // std::cerr << "Failed to get current position" << std::endl;
     return -1;
   }
 
