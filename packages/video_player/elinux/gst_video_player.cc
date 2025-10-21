@@ -485,10 +485,35 @@ bool GstVideoPlayer::createH26xElements(const std::string& codec) {
   gst_.decoder = nullptr;
 
   for (int i = 0; decoder_list[i] != nullptr; i++) {
-    gst_.decoder = gst_element_factory_make(decoder_list[i], "decoder");
+    const char* decoder_name = decoder_list[i];
+    
+    gst_.decoder = gst_element_factory_make(decoder_name, "decoder");
     if (gst_.decoder) {
-      std::cout << "Using decoder: " << decoder_list[i] << std::endl;
+      std::cout << "✅ Successfully created decoder: " << decoder_name << " for " << codec << std::endl;
+      
+      // 針對 qtivdec 的特殊設置
+      if (strcmp(decoder_name, "qtivdec") == 0) {
+        std::cout << "   Configuring qtivdec for " << codec << std::endl;
+        
+        // H.265 需要特殊配置
+        if (codec.find("265") != std::string::npos || codec.find("HEVC") != std::string::npos) {
+          g_object_set(G_OBJECT(gst_.decoder), 
+                       "low-latency", TRUE,
+                       "disable-dpb", FALSE,
+                       "output-order", 0,  // 顯示順序
+                       NULL);
+          std::cout << "   qtivdec configured for H.265/HEVC" << std::endl;
+        } else {
+          // H.264 配置
+          g_object_set(G_OBJECT(gst_.decoder), 
+                       "low-latency", TRUE,
+                       NULL);
+          std::cout << "   qtivdec configured for H.264" << std::endl;
+        }
+      }
       break;
+    } else {
+      std::cout << "❌ Failed to create: " << decoder_name << std::endl;
     }
   }
 
