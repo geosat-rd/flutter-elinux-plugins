@@ -479,7 +479,7 @@ bool GstVideoPlayer::createH26xElements(const std::string& codec) {
 
   // 2. 選擇 decoder
   const char* decoder_candidates_h264[] = {"qtivdec", "avdec_h264", "openh264dec", nullptr};
-  const char* decoder_candidates_h265[] = {"qtivdec", "avdec_h265", "libde265dec", nullptr};
+  const char* decoder_candidates_h265[] = {"avdec_h265", "qtivdec", "libde265dec", nullptr};
 
   const char** decoder_list = (codec.find("264") != std::string::npos) ? decoder_candidates_h264 : decoder_candidates_h265;
   gst_.decoder = nullptr;
