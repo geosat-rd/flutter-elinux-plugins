@@ -65,6 +65,7 @@ class GstVideoPlayer {
   };
 
   static void onPadAdded(GstElement* src, GstPad* new_pad, GstElement* depay);
+  static void onDynamicPadAdded(GstElement* src, GstPad* new_pad, gpointer user_data);
   static void HandoffHandler(GstElement* fakesink, GstBuffer* buf,
                              GstPad* new_pad, gpointer user_data);
   static GstBusSyncReply HandleGstMessage(GstBus* bus, GstMessage* message,
@@ -72,6 +73,7 @@ class GstVideoPlayer {
   std::string ParseUri(const std::string& uri);
   bool CreatePipeline();
   bool CreateLowLatencyRTSPPipeline();
+  bool createH26xElements(const std::string& codec);
   bool CreateAutoDecodeFilePipeline();
   void DestroyPipeline();
   bool Preroll();

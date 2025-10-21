@@ -9,6 +9,7 @@
 #define MAX_WIDTH 8192
 #define MAX_HEIGHT 8192
 
+// 確保所有成員變數都有合理初值（否則會出現「rtsp width 1919903860」那種亂數）
 GstVideoPlayer::GstVideoPlayer(
     const std::string& uri, std::unique_ptr<VideoPlayerStreamHandler> handler)
     : stream_handler_(std::move(handler)) {
@@ -104,26 +105,20 @@ bool GstVideoPlayer::Stop() {
 }
 
 bool GstVideoPlayer::SetVolume(double volume) {
-  if (is_rtsp_) {
-    if (!gst_.pipeline) {
-      return false;
-    }
-  } else {
-    if (!gst_.playbin) {
-      return false;
-    }
-  }
-
   volume_ = volume;
-  g_object_set(gst_.playbin, "volume", volume, NULL);
+  if (!is_rtsp_) {
+    if (!gst_.playbin) return false;
+    g_object_set(gst_.playbin, "volume", volume, NULL);
+  } else {
+    // RTSP pipeline 沒有 playbin 屬性，若要 mute/volume 可透過 audio elements 或忽略
+    // std::cerr << "SetVolume: RTSP pipeline - volume not supported on pipeline object" << std::endl;
+  }
   return true;
 }
 
 bool GstVideoPlayer::SetPlaybackRate(double rate) {
   if (is_rtsp_) {
-    if (!gst_.pipeline) {
-      return false;
-    }
+    return false;
   } else {
     if (!gst_.playbin) {
       return false;
@@ -187,7 +182,7 @@ int64_t GstVideoPlayer::GetDuration() {
   GstFormat fmt = GST_FORMAT_TIME;
   gint64 duration_msec;
   if (!gst_element_query_duration(gst_.pipeline, fmt, &duration_msec)) {
-    std::cerr << "Failed to get duration" << std::endl;
+    //std::cerr << "Failed to get duration" << std::endl;
     return -1;
   }
   duration_msec /= GST_MSECOND;
@@ -290,102 +285,226 @@ bool GstVideoPlayer::CreateLowLatencyRTSPPipeline() {
   // [1/10] Create the pipeline
   gst_.pipeline = gst_pipeline_new("pipeline");
   if (!gst_.pipeline) {
-	  return false;
+    std::cerr << "Failed to create pipeline" << std::endl;
+    return false;
   }
 
   // [2/10] Create GStreamer elements
   gst_.source = gst_element_factory_make("rtspsrc", "source");
-  gst_.depay = gst_element_factory_make("rtph264depay", "depay");
-  gst_.parse = gst_element_factory_make("h264parse", "parse");
-  // 嘗試建立 qtivdec
-  // 自動根據環境選擇可用的解碼器，不會因為某台電腦沒有 qtivdec 就失敗
-  gst_.decoder = gst_element_factory_make("qtivdec", "decoder");
-  if (!gst_.decoder) {
-    std::cerr << "qtivdec not found, fallback to avdec_h264" << std::endl;
-    gst_.decoder = gst_element_factory_make("avdec_h264", "decoder");
-    if (!gst_.decoder) {
-      std::cerr << "avdec_h264 not found, fallback to openh264dec" << std::endl;
-      gst_.decoder = gst_element_factory_make("openh264dec", "decoder");
-      if (!gst_.decoder) {
-        std::cerr << "No suitable decoder found!" << std::endl;
-        return false;
-      }
-    }
-  }
   gst_.video_convert = gst_element_factory_make("videoconvert", "videoconvert");
-  gst_.video_sink = gst_element_factory_make("fakesink", "videosink"); // Fake sink to handle video frames
+  gst_.video_sink = gst_element_factory_make("fakesink", "videosink");
   gst_.queue = gst_element_factory_make("queue", "queue");
 
-  // [3/10] Check if elements are created successfully
-  if (!gst_.source || !gst_.depay || !gst_.parse || !gst_.decoder || !gst_.video_convert || !gst_.video_sink) {
-	  return false;
+  // [3/10] Check if basic elements are created successfully
+  if (!gst_.source || !gst_.video_convert || !gst_.video_sink || !gst_.queue) {
+    std::cerr << "Failed to create basic elements" << std::endl;
+    return false;
   }
 
   g_object_set(G_OBJECT(gst_.queue),
-		 "max-size-buffers", 1, // Limit to 1 buffers to keep latency low
-		 "max-size-bytes", 0,   // No byte limit
-		 //"max-size-time", 0,    // No time limit
-		 "max-size-time", GST_MSECOND * 5,    // Limit handle queue for 20ms
-		 "leaky", 2,            // Leak downstream (drop old frames) if full
-		 NULL);
-
-  /*
-   * For leaky:
-   * Value                Behavior
-   *  0 (No Leak)         Blocks upstream until space is free
-   *  1 (Upstream Leak)   Drops new incoming buffers
-   *  2 (Downstream Leak) Drops old buffers in the queue
-   */
+     "max-size-buffers", 1,
+     "max-size-bytes", 0,
+     "max-size-time", GST_MSECOND * 5,
+     "leaky", 2,
+     NULL);
 
   // [4/10] Set properties for RTSP source
   g_object_set(G_OBJECT(gst_.source),
-		 "location", uri_.c_str(),   // RTSP stream URI
-		 "latency", 0,               // Buffer latency in ms
-		 "buffer-mode", 0,           // Enable low latency mode
-		 "do-retransmission", FALSE, // Disable packet retransmission
-		 "protocols", 0x00000004,    // Use TCP for transport
-		 "drop-on-latency", TRUE,    // Drop frames if latency exceeds threshold
-		 NULL);
+     "location", uri_.c_str(),
+     "latency", 0,
+     "buffer-mode", 0,
+     "do-retransmission", FALSE,
+     "protocols", 0x00000004,
+     "drop-on-latency", TRUE,
+     NULL);
 
   // [5/10] Set properties for fakesink
   g_object_set(G_OBJECT(gst_.video_sink),
-		 "sync", FALSE,           // Disable sync to reduce latency
-		 "async", FALSE,          // Disable async mode for immediate processing
-		 "signal-handoffs", TRUE, // Enable handoff signal to get frames
-		 NULL);
+     "sync", FALSE,
+     "async", FALSE,
+     "signal-handoffs", TRUE,
+     NULL);
 
-  // [6/10] Add all elements to the pipeline
+  // [6/10] Add basic elements to the pipeline
   gst_bin_add_many(GST_BIN(gst_.pipeline),
-		     gst_.source, gst_.depay, gst_.parse, gst_.decoder,
-		     gst_.video_convert, gst_.queue, gst_.video_sink, NULL);
+         gst_.source, gst_.video_convert, gst_.queue, gst_.video_sink, NULL);
 
-  // [7/10] Link static elements
-  if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, gst_.queue, NULL)) {
-	  return false;
-  }
-
-  // Link `videoconvert` to `fakesink` with a caps filter for RGBA format
-  auto *caps = gst_caps_from_string("video/x-raw,format=RGBA");
-  // auto *caps = gst_caps_from_string("video/x-raw,format=NV12"); -> X
-  // auto *caps = gst_caps_from_string("video/x-raw,format=I412"); -> Failed to link
-  if (!gst_element_link_filtered(gst_.queue, gst_.video_sink, caps)) {
+  // [7/10] videoconvert -> queue -> fakesink with RGBA caps
+  GstCaps* caps = gst_caps_from_string("video/x-raw,format=RGBA");
+  if (!gst_element_link_filtered(gst_.video_convert, gst_.queue, caps)) {
+	std::cerr << "Failed to link videoconvert -> queue (RGBA)" << std::endl;
     gst_caps_unref(caps);
-    return false;
+	return false;
   }
   gst_caps_unref(caps);
 
-  // [8/10] Connect dynamic pad-added signal for RTSP source
-  g_signal_connect(gst_.source, "pad-added", G_CALLBACK(onPadAdded), gst_.depay);
+  // queue -> fakesink (不再強制格式)
+  if (!gst_element_link(gst_.queue, gst_.video_sink)) {
+    std::cerr << "Failed to link queue -> video_sink" << std::endl;
+	return false;
+  }
+  
+  // [8/10] 連接動態 pad-added 訊號 h264 or h265
+  g_signal_connect(gst_.source, "pad-added", G_CALLBACK(onDynamicPadAdded), this);
 
-  // [9/10] Connect handoff signal for fakesink to process frames
+  // [9/10] Connect handoff signal for fakesink
   g_signal_connect(gst_.video_sink, "handoff", G_CALLBACK(HandoffHandler), this);
 
   // [10/10] Set up pipeline bus and sync handler
   gst_.bus = gst_pipeline_get_bus(GST_PIPELINE(gst_.pipeline));
   if (!gst_.bus) {
-	  return false;
+    std::cerr << "Failed to get pipeline bus" << std::endl;
+    return false;
   }
   gst_bus_set_sync_handler(gst_.bus, HandleGstMessage, this, NULL);
+  
+  std::cout << "RTSP pipeline created successfully for: " << uri_.c_str() << std::endl;
+  return true;
+}
+
+void GstVideoPlayer::onDynamicPadAdded(GstElement* src, GstPad* new_pad, gpointer user_data) {
+  GstVideoPlayer *player = static_cast<GstVideoPlayer*>(user_data);
+  
+  GstPad* sink_pad = nullptr;
+  GstCaps* new_pad_caps = nullptr;
+  GstStructure* new_pad_struct = nullptr;
+  const gchar* new_pad_type = nullptr;
+
+  std::cout << "Dynamic pad added, checking caps..." << std::endl;
+
+  new_pad_caps = gst_pad_get_current_caps(new_pad);
+  if (!new_pad_caps) {
+    new_pad_caps = gst_pad_query_caps(new_pad, nullptr);
+  }
+
+  if (!new_pad_caps) {
+    std::cerr << "Failed to get caps from new pad" << std::endl;
+    return;
+  }
+  
+  if (gst_caps_is_empty(new_pad_caps)) {
+    std::cerr << "Caps is empty" << std::endl;
+    gst_caps_unref(new_pad_caps);
+    return;
+  }
+
+  new_pad_struct = gst_caps_get_structure(new_pad_caps, 0);
+  if (!new_pad_struct) {
+    std::cerr << "Failed to get structure from caps" << std::endl;
+    gst_caps_unref(new_pad_caps);
+    return;
+  }
+
+  new_pad_type = gst_structure_get_name(new_pad_struct);
+  std::cout << "Dynamic pad added with type: " << (new_pad_type ? new_pad_type : "null") << std::endl;
+
+  if (g_str_has_prefix(new_pad_type, "application/x-rtp")) {
+    const gchar *encoding_name = gst_structure_get_string(new_pad_struct, "encoding-name");
+    
+    std::cout << "Detected encoding: " << (encoding_name ? encoding_name : "unknown") << std::endl;
+
+    bool elements_created = false;
+    
+    if (encoding_name) {
+	  elements_created = player->createH26xElements(encoding_name);
+	  if (!elements_created) {
+		std::cerr << "Failed to create H26x elements for: " << encoding_name << std::endl;
+		gst_caps_unref(new_pad_caps);
+		return;
+	  }
+	}
+
+    if (!elements_created) {
+      std::cerr << "Failed to create elements for encoding: " << (encoding_name ? encoding_name : "unknown") << std::endl;
+      gst_caps_unref(new_pad_caps);
+      return;
+    }
+	
+	if (!player->gst_.depay) {
+	  std::cerr << "Depay element not created yet!" << std::endl;
+	  gst_caps_unref(new_pad_caps);
+	  return;
+	}
+
+    sink_pad = gst_element_get_static_pad(player->gst_.depay, "sink");
+    if (!sink_pad) {
+      std::cerr << "Failed to get sink pad from depay element" << std::endl;
+      gst_caps_unref(new_pad_caps);
+      return;
+    }
+
+    if (gst_pad_is_linked(sink_pad)) {
+      std::cout << "Pad is already linked. Ignoring." << std::endl;
+      gst_object_unref(sink_pad);
+      gst_caps_unref(new_pad_caps);
+      return;
+    }
+
+    GstPadLinkReturn ret = gst_pad_link(new_pad, sink_pad);
+    if (GST_PAD_LINK_FAILED(ret)) {
+      std::cerr << "Failed to link pads: " << gst_pad_link_get_name(ret) << std::endl;
+    } else {
+      std::cout << "Link succeeded for encoding: " << encoding_name << std::endl;
+      gst_element_set_state(player->gst_.depay, GST_STATE_PLAYING);
+      gst_element_set_state(player->gst_.parse, GST_STATE_PLAYING);
+      gst_element_set_state(player->gst_.decoder, GST_STATE_PLAYING);
+    }
+
+    gst_object_unref(sink_pad);
+  }
+
+  gst_caps_unref(new_pad_caps);
+}
+
+// 建立 H.264 or H.265 解碼器
+bool GstVideoPlayer::createH26xElements(const std::string& codec) {
+  std::cout << "Creating " << codec << " elements" << std::endl;
+
+  // 1. 建立 depay / parse
+  if (codec == "H264" || codec == "h264") {
+    gst_.depay = gst_element_factory_make("rtph264depay", "depay");
+    gst_.parse = gst_element_factory_make("h264parse", "parse");
+  } else if (codec == "H265" || codec == "h265" || codec == "HEVC" || codec == "hevc") {
+    gst_.depay = gst_element_factory_make("rtph265depay", "depay");
+    gst_.parse = gst_element_factory_make("h265parse", "parse");
+  } else {
+    std::cerr << "Unsupported codec: " << codec << std::endl;
+    return false;
+  }
+
+  if (!gst_.depay || !gst_.parse) {
+    std::cerr << "Failed to create depay/parse elements" << std::endl;
+    return false;
+  }
+
+  // 2. 選擇 decoder
+  const char* decoder_candidates_h264[] = {"qtivdec", "avdec_h264", "openh264dec", nullptr};
+  const char* decoder_candidates_h265[] = {"qtivdec", "avdec_h265", "libde265dec", nullptr};
+
+  const char** decoder_list = (codec.find("264") != std::string::npos) ? decoder_candidates_h264 : decoder_candidates_h265;
+  gst_.decoder = nullptr;
+
+  for (int i = 0; decoder_list[i] != nullptr; i++) {
+    gst_.decoder = gst_element_factory_make(decoder_list[i], "decoder");
+    if (gst_.decoder) {
+      std::cout << "Using decoder: " << decoder_list[i] << std::endl;
+      break;
+    }
+  }
+
+  if (!gst_.decoder) {
+    std::cerr << "No suitable decoder found for " << codec << std::endl;
+    return false;
+  }
+
+  // 3. 將元素加入 pipeline
+  gst_bin_add_many(GST_BIN(gst_.pipeline), gst_.depay, gst_.parse, gst_.decoder, NULL);
+
+  // 4. 連接元素
+  if (!gst_element_link_many(gst_.depay, gst_.parse, gst_.decoder, gst_.video_convert, NULL)) {
+    std::cerr << "Failed to link H26x elements" << std::endl;
+    return false;
+  }
 
   return true;
 }
@@ -565,6 +684,15 @@ std::string GstVideoPlayer::ParseUri(const std::string& uri) {
 }
 
 void GstVideoPlayer::GetVideoSize(int32_t& width, int32_t& height) {
+  width = 0;
+  height = 0;
+
+  if (!gst_.pipeline || !gst_.video_sink) {
+    std::cerr
+        << "Failed to get video size. The pileline hasn't initialized yet.";
+    return;
+  }
+	
   if (is_rtsp_) {
     std::cerr
         << "rtsp width " << width << ", height " << height << std::endl;
@@ -575,13 +703,6 @@ void GstVideoPlayer::GetVideoSize(int32_t& width, int32_t& height) {
     }
   }
   
-
-  if (!gst_.pipeline || !gst_.video_sink) {
-    std::cerr
-        << "Failed to get video size. The pileline hasn't initialized yet.";
-    return;
-  }
-
   auto* sink_pad = gst_element_get_static_pad(gst_.video_sink, "sink");
   if (!sink_pad) {
     std::cerr << "Failed to get a pad";
