@@ -60,7 +60,7 @@ class GstVideoPlayer {
     GstElement* source;  // rtspsrc
     GstElement* depay;   // rtph264depay
     GstElement* parse;   // h264parse
-    GstElement* decoder; // qtic2vdec
+	GstElement* decodebin; 
     GstElement* queue;
   };
 
